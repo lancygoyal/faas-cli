@@ -302,7 +302,8 @@ func Test_buildFlagSlice(t *testing.T) {
 
 		t.Run(test.title, func(t *testing.T) {
 
-			flagSlice := buildFlagSlice(test.nocache, test.squash, test.httpProxy, test.httpsProxy, test.buildArgMap, test.buildPackages, test.buildLabelMap)
+			forcePull := false
+			flagSlice := buildFlagSlice(test.nocache, test.squash, test.httpProxy, test.httpsProxy, test.buildArgMap, test.buildPackages, test.buildLabelMap, forcePull)
 			fmt.Println(flagSlice)
 			if len(flagSlice) != len(test.expectedSlice) {
 				t.Errorf("Slices differ in size - wanted: %d, found %d", len(test.expectedSlice), len(flagSlice))
@@ -361,7 +362,7 @@ func Test_getPackages(t *testing.T) {
 		{
 			title: "Single Option",
 			availableBuildOptions: []stack.BuildOption{
-				stack.BuildOption{Name: "dev",
+				{Name: "dev",
 					Packages: []string{"jq", "hw", "ke"}},
 			},
 			requestedBuildOptions: []string{"dev"},
@@ -370,9 +371,9 @@ func Test_getPackages(t *testing.T) {
 		{
 			title: "Two Options one chosen",
 			availableBuildOptions: []stack.BuildOption{
-				stack.BuildOption{Name: "dev",
+				{Name: "dev",
 					Packages: []string{"jq", "hw", "ke"}},
-				stack.BuildOption{Name: "debug",
+				{Name: "debug",
 					Packages: []string{"lr", "kt", "jy"}},
 			},
 			requestedBuildOptions: []string{"dev"},
@@ -381,9 +382,9 @@ func Test_getPackages(t *testing.T) {
 		{
 			title: "Two Options two chosen",
 			availableBuildOptions: []stack.BuildOption{
-				stack.BuildOption{Name: "dev",
+				{Name: "dev",
 					Packages: []string{"jq", "hw", "ke"}},
-				stack.BuildOption{Name: "debug",
+				{Name: "debug",
 					Packages: []string{"lr", "kt", "jy"}},
 			},
 			requestedBuildOptions: []string{"dev", "debug"},
@@ -392,9 +393,9 @@ func Test_getPackages(t *testing.T) {
 		{
 			title: "Two Options two chosen with overlaps",
 			availableBuildOptions: []stack.BuildOption{
-				stack.BuildOption{Name: "dev",
+				{Name: "dev",
 					Packages: []string{"jq", "hw", "ke"}},
-				stack.BuildOption{Name: "debug",
+				{Name: "debug",
 					Packages: []string{"lr", "jq", "hw"}},
 			},
 			requestedBuildOptions: []string{"dev", "debug"},

@@ -9,17 +9,22 @@ import (
 	"sync"
 	"time"
 
-	v1execute "github.com/alexellis/go-execute/pkg/v1"
+	v2execute "github.com/alexellis/go-execute/v2"
 	"github.com/morikuni/aec"
+	"github.com/openfaas/faas-cli/util"
+
 	"github.com/openfaas/faas-cli/builder"
 	"github.com/openfaas/faas-cli/stack"
 	"github.com/spf13/cobra"
 )
 
 var (
-	platforms string
-	extraTags []string
-	resetQemu bool
+	platforms         string
+	extraTags         []string
+	resetQemu         bool
+	mountSSH          bool
+	remoteBuilder     string
+	payloadSecretPath string
 )
 
 func init() {
@@ -44,8 +49,10 @@ func init() {
 	publishCmd.Flags().BoolVar(&disableStackPull, "disable-stack-pull", false, "Disables the template configuration in the stack.yml")
 	publishCmd.Flags().StringVar(&platforms, "platforms", "linux/amd64", "A set of platforms to publish")
 	publishCmd.Flags().StringArrayVar(&extraTags, "extra-tag", []string{}, "Additional extra image tag")
-
-	publishCmd.Flags().BoolVar(&resetQemu, "reset-qemu", false, "Runs \"docker run multiarch/qemu-user-static --reset -p yes`\" to enable multi-arch builds. Compatible with AMD64 machines only.")
+	publishCmd.Flags().BoolVar(&resetQemu, "reset-qemu", false, "Runs \"docker run multiarch/qemu-user-static --reset -p yes\" to enable multi-arch builds. Compatible with AMD64 machines only.")
+	publishCmd.Flags().StringVar(&remoteBuilder, "remote-builder", "", "URL to the builder")
+	publishCmd.Flags().StringVar(&payloadSecretPath, "payload-secret", "", "Path to payload secret file")
+	publishCmd.Flags().BoolVar(&forcePull, "pull", false, "Force a re-pull of base images in template during build, useful for publishing images")
 
 	// Set bash-completion.
 	_ = publishCmd.Flags().SetAnnotation("handler", cobra.BashCompSubdirsInDir, []string{})
@@ -59,7 +66,7 @@ var publishCmd = &cobra.Command{
   faas-cli publish --image IMAGE_NAME
                    --handler HANDLER_DIR
                    --name FUNCTION_NAME
-                   [--lang <ruby|python|python3|node|csharp|dockerfile>]
+                   [--lang LANG]
                    [--no-cache] [--squash]
                    [--regex "REGEX"]
                    [--filter "WILDCARD"]
@@ -68,8 +75,9 @@ var publishCmd = &cobra.Command{
                    [--build-option VALUE]
                    [--copy-extra PATH]
                    [--tag <sha|branch|describe>]
-                   [--platforms linux/arm/v7]
-				   [--resetQemu]`,
+                   [--platforms linux/amd64,linux/arm64]
+                   [--reset-qemu]
+                   [--remote-builder http://127.0.0.1:8081/build]`,
 	Short: "Builds and pushes multi-arch OpenFaaS container images",
 	Long: `Builds and pushes multi-arch OpenFaaS container images using Docker buildx.
 Most users will want faas-cli build or faas-cli up for development and testing.
@@ -82,12 +90,13 @@ Docker and buildx. You must use a multi-arch template to use this command with
 correctly configured TARGETPLATFORM and BUILDPLATFORM arguments.
 
 See also: faas-cli build`,
-	Example: `  faas-cli publish --platforms linux/amd64,linux/arm64,linux/arm/7
-  faas-cli publish --platforms linux/arm/7 --filter webhook
+	Example: `  faas-cli publish --platforms linux/amd64,linux/arm64
+  faas-cli publish --platforms linux/arm64 --filter webhook-arm
   faas-cli publish -f go.yml --no-cache --build-arg NPM_VERSION=0.2.2
   faas-cli publish --build-option dev
   faas-cli publish --tag sha
   faas-cli publish --reset-qemu
+  faas-cli publish --remote-builder http://127.0.0.1:8081/build
   `,
 	PreRunE: preRunPublish,
 	RunE:    runPublish,
@@ -103,7 +112,7 @@ func preRunPublish(cmd *cobra.Command, args []string) error {
 		buildArgMap = mapped
 	}
 
-	buildLabelMap, err = parseMap(buildLabels, "build-label")
+	buildLabelMap, err = util.ParseMap(buildLabels, "build-label")
 
 	if parallel < 1 {
 		return fmt.Errorf("the --parallel flag must be great than 0")
@@ -131,19 +140,25 @@ func runPublish(cmd *cobra.Command, args []string) error {
 	}
 
 	templateAddress := getTemplateURL("", os.Getenv(templateURLEnvironment), DefaultTemplateRepository)
-	if pullErr := PullTemplates(templateAddress); pullErr != nil {
+	if pullErr := pullTemplates(templateAddress); pullErr != nil {
 		return fmt.Errorf("could not pull templates for OpenFaaS: %v", pullErr)
 	}
 
 	if resetQemu {
 
-		task := v1execute.ExecTask{
-			Command:     "docker",
-			Args:        []string{"run", "--rm", "--privileged", "multiarch/qemu-user-static", "--reset", "-p", "yes"},
+		task := v2execute.ExecTask{
+			Command: "docker",
+			Args: []string{"run",
+				"--rm",
+				"--privileged",
+				"multiarch/qemu-user-static",
+				"--reset",
+				"-p",
+				"yes"},
 			StreamStdio: false,
 		}
 
-		res, err := task.Execute()
+		res, err := task.Execute(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -157,23 +172,29 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Ran qemu-user-static --reset. OK.\n")
 	}
 
-	task := v1execute.ExecTask{
-		Command:     "docker",
-		Args:        []string{"buildx", "create", "--use", "--name=multiarch", "--node=multiarch"},
-		StreamStdio: false,
-		Env:         []string{"DOCKER_CLI_EXPERIMENTAL=enabled"},
-	}
+	if len(remoteBuilder) == 0 {
+		task := v2execute.ExecTask{
+			Command: "docker",
+			Args: []string{"buildx",
+				"create",
+				"--use",
+				"--name=multiarch",
+				"--node=multiarch"},
+			StreamStdio: false,
+			Env:         []string{"DOCKER_CLI_EXPERIMENTAL=enabled"},
+		}
 
-	res, err := task.Execute()
-	if err != nil {
-		return err
-	}
+		res, err := task.Execute(cmd.Context())
+		if err != nil {
+			return err
+		}
 
-	if res.ExitCode != 0 {
-		return fmt.Errorf("non-zero exit code: %d, stderr: %s", res.ExitCode, res.Stderr)
-	}
+		if res.ExitCode != 0 {
+			return fmt.Errorf("non-zero exit code: %d, stderr: %s", res.ExitCode, res.Stderr)
+		}
 
-	fmt.Printf("Created buildx node: \"multiarch\"\n")
+		fmt.Printf("Created buildx node: \"multiarch\"\n")
+	}
 
 	if len(services.StackConfiguration.TemplateConfigs) != 0 && !disableStackPull {
 		newTemplateInfos, err := filterExistingTemplates(services.StackConfiguration.TemplateConfigs, "./template")
@@ -187,7 +208,7 @@ func runPublish(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	errors := publish(&services, parallel, shrinkwrap, quietBuild)
+	errors := publish(&services, parallel, shrinkwrap, quietBuild, mountSSH)
 	if len(errors) > 0 {
 		errorSummary := "Errors received during build:\n"
 		for _, err := range errors {
@@ -198,7 +219,7 @@ func runPublish(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func publish(services *stack.Services, queueDepth int, shrinkwrap, quietBuild bool) []error {
+func publish(services *stack.Services, queueDepth int, shrinkwrap, quietBuild, mountSSH bool) []error {
 	startOuter := time.Now()
 
 	errors := []error{}
@@ -218,8 +239,8 @@ func publish(services *stack.Services, queueDepth int, shrinkwrap, quietBuild bo
 					fmt.Println("Please provide a valid language for your function.")
 				} else {
 					combinedBuildOptions := combineBuildOpts(function.BuildOptions, buildOptions)
-					combinedBuildArgMap := mergeMap(function.BuildArgs, buildArgMap)
-					combinedExtraPaths := mergeSlice(services.StackConfiguration.CopyExtraPaths, copyExtra)
+					combinedBuildArgMap := util.MergeMap(function.BuildArgs, buildArgMap)
+					combinedExtraPaths := util.MergeSlice(services.StackConfiguration.CopyExtraPaths, copyExtra)
 					err := builder.PublishImage(function.Image,
 						function.Handler,
 						function.Name,
@@ -235,6 +256,9 @@ func publish(services *stack.Services, queueDepth int, shrinkwrap, quietBuild bo
 						combinedExtraPaths,
 						platforms,
 						extraTags,
+						remoteBuilder,
+						payloadSecretPath,
+						forcePull,
 					)
 
 					if err != nil {

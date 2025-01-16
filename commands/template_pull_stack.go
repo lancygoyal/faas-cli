@@ -2,10 +2,9 @@ package commands
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 
 	"github.com/openfaas/faas-cli/stack"
 	"github.com/spf13/cobra"
@@ -55,16 +54,16 @@ func loadTemplateConfig() ([]stack.TemplateSource, error) {
 func readStackConfig() (stack.Configuration, error) {
 	configField := stack.Configuration{}
 
-	configFieldBytes, err := ioutil.ReadFile(yamlFile)
+	configFieldBytes, err := os.ReadFile(yamlFile)
 	if err != nil {
-		return configField, fmt.Errorf("Error while reading files %s", err.Error())
+		return configField, fmt.Errorf("can't read file %s, error: %s", yamlFile, err.Error())
 	}
-	unmarshallErr := yaml.Unmarshal(configFieldBytes, &configField)
-	if unmarshallErr != nil {
-		return configField, fmt.Errorf("Error while reading configuration: %s", err.Error())
+	if err := yaml.Unmarshal(configFieldBytes, &configField); err != nil {
+		return configField, fmt.Errorf("can't read: %s", err.Error())
 	}
+
 	if len(configField.StackConfig.TemplateConfigs) == 0 {
-		return configField, fmt.Errorf("Error while reading configuration: no template repos currently configured")
+		return configField, fmt.Errorf("can't read configuration: no template repos currently configured")
 	}
 	return configField, nil
 }

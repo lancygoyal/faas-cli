@@ -4,10 +4,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
+	"errors"
 
 	"fmt"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"path"
@@ -15,10 +16,10 @@ import (
 	"strings"
 
 	"github.com/mitchellh/go-homedir"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
-//AuthType auth type
+// AuthType auth type
 type AuthType string
 
 const (
@@ -54,6 +55,22 @@ type AuthConfig struct {
 	Gateway string   `yaml:"gateway,omitempty"`
 	Auth    AuthType `yaml:"auth,omitempty"`
 	Token   string   `yaml:"token,omitempty"`
+	Options []Option `yaml:"options,omitempty"`
+}
+
+type Option struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
+}
+
+var ErrConfigNotFound = errors.New("config file not found")
+
+type AuthConfigNotFoundError struct {
+	Gateway string
+}
+
+func (e *AuthConfigNotFoundError) Error() string {
+	return fmt.Sprintf("no auth config found for %s", e.Gateway)
 }
 
 // New initializes a config file for the given file path
@@ -153,12 +170,14 @@ func (configFile *ConfigFile) save() error {
 	}
 	defer file.Close()
 
-	data, err := yaml.Marshal(configFile)
-	if err != nil {
+	var buff bytes.Buffer
+	yamlEncoder := yaml.NewEncoder(&buff)
+	yamlEncoder.SetIndent(2) // this is what you're looking for
+	if err := yamlEncoder.Encode(&configFile); err != nil {
 		return err
 	}
 
-	_, err = file.Write(data)
+	_, err = file.Write(buff.Bytes())
 	return err
 }
 
@@ -170,7 +189,7 @@ func (configFile *ConfigFile) load() error {
 		return fmt.Errorf("can't load config from non existent filePath")
 	}
 
-	data, err := ioutil.ReadFile(configFile.FilePath)
+	data, err := os.ReadFile(configFile.FilePath)
 	if err != nil {
 		return err
 	}
@@ -208,7 +227,9 @@ func DecodeAuth(input string) (string, string, error) {
 }
 
 // UpdateAuthConfig creates or updates the username and password for a given gateway
-func UpdateAuthConfig(gateway, token string, authType AuthType) error {
+func UpdateAuthConfig(authConfig AuthConfig) error {
+	gateway := authConfig.Gateway
+
 	_, err := url.ParseRequestURI(gateway)
 	if err != nil || len(gateway) < 1 {
 		return fmt.Errorf("invalid gateway URL")
@@ -228,12 +249,6 @@ func UpdateAuthConfig(gateway, token string, authType AuthType) error {
 		return err
 	}
 
-	auth := AuthConfig{
-		Gateway: gateway,
-		Auth:    authType,
-		Token:   token,
-	}
-
 	index := -1
 	for i, v := range cfg.AuthConfigs {
 		if gateway == v.Gateway {
@@ -243,9 +258,9 @@ func UpdateAuthConfig(gateway, token string, authType AuthType) error {
 	}
 
 	if index == -1 {
-		cfg.AuthConfigs = append(cfg.AuthConfigs, auth)
+		cfg.AuthConfigs = append(cfg.AuthConfigs, authConfig)
 	} else {
-		cfg.AuthConfigs[index] = auth
+		cfg.AuthConfigs[index] = authConfig
 	}
 
 	if err := cfg.save(); err != nil {
@@ -260,7 +275,7 @@ func LookupAuthConfig(gateway string) (AuthConfig, error) {
 	var authConfig AuthConfig
 
 	if !fileExists() {
-		return authConfig, fmt.Errorf("config file not found")
+		return authConfig, ErrConfigNotFound
 	}
 
 	configPath, err := EnsureFile()
@@ -284,13 +299,13 @@ func LookupAuthConfig(gateway string) (AuthConfig, error) {
 		}
 	}
 
-	return authConfig, fmt.Errorf("no auth config found for %s", gateway)
+	return authConfig, &AuthConfigNotFoundError{Gateway: gateway}
 }
 
 // RemoveAuthConfig deletes the username and password for a given gateway
 func RemoveAuthConfig(gateway string) error {
 	if !fileExists() {
-		return fmt.Errorf("config file not found")
+		return ErrConfigNotFound
 	}
 
 	configPath, err := EnsureFile()
@@ -321,7 +336,7 @@ func RemoveAuthConfig(gateway string) error {
 			return err
 		}
 	} else {
-		return fmt.Errorf("gateway %s not found in config", gateway)
+		return &AuthConfigNotFoundError{Gateway: gateway}
 	}
 
 	return nil

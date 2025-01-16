@@ -15,6 +15,8 @@ import (
 	"github.com/openfaas/faas-cli/builder"
 	"github.com/openfaas/faas-cli/schema"
 	"github.com/openfaas/faas-cli/stack"
+	"github.com/openfaas/faas-cli/util"
+
 	"github.com/openfaas/faas-cli/versioncontrol"
 	"github.com/spf13/cobra"
 )
@@ -35,6 +37,7 @@ var (
 	envsubst         bool
 	quietBuild       bool
 	disableStackPull bool
+	forcePull        bool
 )
 
 func init() {
@@ -51,12 +54,13 @@ func init() {
 	buildCmd.Flags().BoolVar(&shrinkwrap, "shrinkwrap", false, "Just write files to ./build/ folder for shrink-wrapping")
 	buildCmd.Flags().StringArrayVarP(&buildArgs, "build-arg", "b", []string{}, "Add a build-arg for Docker (KEY=VALUE)")
 	buildCmd.Flags().StringArrayVarP(&buildOptions, "build-option", "o", []string{}, "Set a build option, e.g. dev")
-	buildCmd.Flags().Var(&tagFormat, "tag", "Override latest tag on function Docker image, accepts 'latest', 'sha', 'branch', or 'describe'")
+	buildCmd.Flags().Var(&tagFormat, "tag", "Override latest tag on function Docker image, accepts 'digest', 'sha', 'branch', or 'describe', or 'latest'")
 	buildCmd.Flags().StringArrayVar(&buildLabels, "build-label", []string{}, "Add a label for Docker image (LABEL=VALUE)")
 	buildCmd.Flags().StringArrayVar(&copyExtra, "copy-extra", []string{}, "Extra paths that will be copied into the function build context")
 	buildCmd.Flags().BoolVar(&envsubst, "envsubst", true, "Substitute environment variables in stack.yml file")
 	buildCmd.Flags().BoolVar(&quietBuild, "quiet", false, "Perform a quiet build, without showing output from Docker")
 	buildCmd.Flags().BoolVar(&disableStackPull, "disable-stack-pull", false, "Disables the template configuration in the stack.yml")
+	buildCmd.Flags().BoolVar(&forcePull, "pull", false, "Force a re-pull of base images in template during build, useful for publishing images")
 
 	// Set bash-completion.
 	_ = buildCmd.Flags().SetAnnotation("handler", cobra.BashCompSubdirsInDir, []string{})
@@ -78,7 +82,8 @@ var buildCmd = &cobra.Command{
                  [--build-arg KEY=VALUE]
                  [--build-option VALUE]
                  [--copy-extra PATH]
-                 [--tag <sha|branch|describe>]`,
+                 [--tag <sha|branch|describe>]
+				 [--forcePull]`,
 	Short: "Builds OpenFaaS function containers",
 	Long: `Builds OpenFaaS function containers either via the supplied YAML config using
 the "--yaml" flag (which may contain multiple function definitions), or directly
@@ -108,7 +113,7 @@ func preRunBuild(cmd *cobra.Command, args []string) error {
 		buildArgMap = mapped
 	}
 
-	buildLabelMap, err = parseMap(buildLabels, "build-label")
+	buildLabelMap, err = util.ParseMap(buildLabels, "build-label")
 
 	if parallel < 1 {
 		return fmt.Errorf("the --parallel flag must be great than 0")
@@ -162,12 +167,24 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	templateAddress := getTemplateURL("", os.Getenv(templateURLEnvironment), DefaultTemplateRepository)
-	if pullErr := PullTemplates(templateAddress); pullErr != nil {
-		return fmt.Errorf("could not pull templates for OpenFaaS: %v", pullErr)
+	if len(services.StackConfiguration.TemplateConfigs) > 0 && !disableStackPull {
+		newTemplateInfos, err := filterExistingTemplates(services.StackConfiguration.TemplateConfigs, "./template")
+		if err != nil {
+			return fmt.Errorf("already pulled templates directory has issue: %s", err.Error())
+		}
+
+		if err = pullStackTemplates(newTemplateInfos, cmd); err != nil {
+			return fmt.Errorf("could not pull templates from function yaml file: %s", err.Error())
+		}
+	} else {
+		templateAddress := getTemplateURL("", os.Getenv(templateURLEnvironment), DefaultTemplateRepository)
+		if pullErr := pullTemplates(templateAddress); pullErr != nil {
+			return fmt.Errorf("could not pull templates for OpenFaaS: %v", pullErr)
+		}
 	}
 
 	if len(services.Functions) == 0 {
+
 		if len(image) == 0 {
 			return fmt.Errorf("please provide a valid --image name for your Docker image")
 		}
@@ -177,7 +194,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		if len(functionName) == 0 {
 			return fmt.Errorf("please provide the deployed --name of your function")
 		}
-		err := builder.BuildImage(image,
+
+		if err := builder.BuildImage(image,
 			handler,
 			functionName,
 			language,
@@ -190,23 +208,14 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			buildLabelMap,
 			quietBuild,
 			copyExtra,
-		)
-		if err != nil {
+			remoteBuilder,
+			payloadSecretPath,
+			forcePull,
+		); err != nil {
 			return err
 		}
+
 		return nil
-	}
-
-	if len(services.StackConfiguration.TemplateConfigs) != 0 && !disableStackPull {
-		newTemplateInfos, err := filterExistingTemplates(services.StackConfiguration.TemplateConfigs, "./template")
-		if err != nil {
-			return fmt.Errorf("already pulled templates directory has issue: %s", err.Error())
-		}
-
-		err = pullStackTemplates(newTemplateInfos, cmd)
-		if err != nil {
-			return fmt.Errorf("could not pull templates from function yaml file: %s", err.Error())
-		}
 	}
 
 	errors := build(&services, parallel, shrinkwrap, quietBuild)
@@ -217,6 +226,7 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("%s", aec.Apply(errorSummary, aec.RedF))
 	}
+
 	return nil
 }
 
@@ -240,8 +250,8 @@ func build(services *stack.Services, queueDepth int, shrinkwrap, quietBuild bool
 					fmt.Println("Please provide a valid language for your function.")
 				} else {
 					combinedBuildOptions := combineBuildOpts(function.BuildOptions, buildOptions)
-					combinedBuildArgMap := mergeMap(function.BuildArgs, buildArgMap)
-					combinedExtraPaths := mergeSlice(services.StackConfiguration.CopyExtraPaths, copyExtra)
+					combinedBuildArgMap := util.MergeMap(function.BuildArgs, buildArgMap)
+					combinedExtraPaths := util.MergeSlice(services.StackConfiguration.CopyExtraPaths, copyExtra)
 					err := builder.BuildImage(function.Image,
 						function.Handler,
 						function.Name,
@@ -255,6 +265,9 @@ func build(services *stack.Services, queueDepth int, shrinkwrap, quietBuild bool
 						buildLabelMap,
 						quietBuild,
 						combinedExtraPaths,
+						remoteBuilder,
+						payloadSecretPath,
+						forcePull,
 					)
 
 					if err != nil {
@@ -290,8 +303,8 @@ func build(services *stack.Services, queueDepth int, shrinkwrap, quietBuild bool
 	return errors
 }
 
-// PullTemplates pulls templates from specified git remote. templateURL may be a pinned repository.
-func PullTemplates(templateURL string) error {
+// pullTemplates pulls templates from specified git remote. templateURL may be a pinned repository.
+func pullTemplates(templateURL string) error {
 	var err error
 	exists, err := os.Stat("./template")
 	if err != nil || exists == nil {
@@ -308,7 +321,5 @@ func PullTemplates(templateURL string) error {
 }
 
 func combineBuildOpts(YAMLBuildOpts []string, buildFlagBuildOpts []string) []string {
-
-	return mergeSlice(YAMLBuildOpts, buildFlagBuildOpts)
-
+	return util.MergeSlice(YAMLBuildOpts, buildFlagBuildOpts)
 }

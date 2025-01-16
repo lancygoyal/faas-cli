@@ -62,6 +62,9 @@ type Function struct {
 
 	// Platforms for use with buildx and faas-cli publish
 	Platforms string `yaml:"platforms,omitempty"`
+
+	// BuildSecrets is a set of secrets to mount with buildkit
+	BuildSecrets map[string]string `yaml:"build_secrets,omitempty"`
 }
 
 // Configuration for the stack.yml file
@@ -113,10 +116,14 @@ type LanguageTemplate struct {
 	FProcess string `yaml:"fprocess,omitempty"`
 
 	BuildOptions []BuildOption `yaml:"build_options,omitempty"`
+
 	// WelcomeMessage is printed to the user after generating a function
 	WelcomeMessage string `yaml:"welcome_message,omitempty"`
+
 	// HandlerFolder to copy the function code into
 	HandlerFolder string `yaml:"handler_folder,omitempty"`
+
+	MountSSH bool `yaml:"mount_ssh,omitempty"`
 }
 
 // BuildOption a named build option for one or more packages

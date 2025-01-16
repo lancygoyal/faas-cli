@@ -8,25 +8,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 
-	"github.com/openfaas/faas/gateway/requests"
+	"github.com/openfaas/faas-provider/types"
 )
 
 // DeleteFunction delete a function from the OpenFaaS server
 func (c *Client) DeleteFunction(ctx context.Context, functionName string, namespace string) error {
 	var err error
-	delReq := requests.DeleteFunctionRequest{FunctionName: functionName}
-	reqBytes, _ := json.Marshal(&delReq)
+	delReq := types.DeleteFunctionRequest{
+		FunctionName: functionName,
+		Namespace:    namespace,
+	}
+
+	reqBytes, err := json.Marshal(&delReq)
+	if err != nil {
+		return err
+	}
+
 	reader := bytes.NewReader(reqBytes)
 	deleteEndpoint := "/system/functions"
 
 	query := url.Values{}
-	if len(namespace) > 0 {
-		query.Add("namespace", namespace)
-	}
 
 	req, err := c.newRequest(http.MethodDelete, deleteEndpoint, query, reader)
 	if err != nil {
@@ -54,7 +59,7 @@ func (c *Client) DeleteFunction(ctx context.Context, functionName string, namesp
 		err = fmt.Errorf("unauthorized access, run \"faas-cli login\" to setup authentication for this server")
 	default:
 		var bodyReadErr error
-		bytesOut, bodyReadErr := ioutil.ReadAll(res.Body)
+		bytesOut, bodyReadErr := io.ReadAll(res.Body)
 		if bodyReadErr != nil {
 			err = bodyReadErr
 		} else {

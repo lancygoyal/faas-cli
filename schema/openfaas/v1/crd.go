@@ -8,10 +8,10 @@ import (
 	"github.com/openfaas/faas-cli/stack"
 )
 
-//APIVersionLatest latest API version of CRD
+// APIVersionLatest latest API version of CRD
 const APIVersionLatest = "openfaas.com/v1"
 
-//Spec describe characteristics of the object
+// Spec describe characteristics of the object
 type Spec struct {
 	//Name name of the function
 	Name string `yaml:"name"`
@@ -34,9 +34,11 @@ type Spec struct {
 
 	//Secrets list of secrets to be made available to function
 	Secrets []string `yaml:"secrets,omitempty"`
+
+	ReadOnlyRootFilesystem bool `yaml:"readOnlyRootFilesystem,omitempty"`
 }
 
-//CRD root level YAML definition for the object
+// CRD root level YAML definition for the object
 type CRD struct {
 	//APIVersion CRD API version
 	APIVersion string `yaml:"apiVersion"`

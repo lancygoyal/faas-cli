@@ -16,7 +16,7 @@ build:
 
 .PHONY: build_redist
 build_redist:
-	./build_redist.sh
+	./extract_binaries.sh
 
 .PHONY: build_samples
 build_samples:
@@ -35,7 +35,31 @@ local-install:
 	CGO_ENABLED=0 go install --ldflags "-s -w \
 	   -X github.com/openfaas/faas-cli/version.GitCommit=${.GIT_COMMIT} \
 	   -X github.com/openfaas/faas-cli/version.Version=${.GIT_VERSION}" \
-	   -a -installsuffix cgo
+	   
+
+.PHONY: dist
+dist:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build --ldflags "-s -w \
+	   -X github.com/openfaas/faas-cli/version.GitCommit=${.GIT_COMMIT} \
+	   -X github.com/openfaas/faas-cli/version.Version=${.GIT_VERSION}" \
+	    -o ./bin/faas-cli
+
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build --ldflags "-s -w \
+	   -X github.com/openfaas/faas-cli/version.GitCommit=${.GIT_COMMIT} \
+	   -X github.com/openfaas/faas-cli/version.Version=${.GIT_VERSION}" \
+	    -o ./bin/faas-cli-darwin
+
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build --ldflags "-s -w \
+	   -X github.com/openfaas/faas-cli/version.GitCommit=${.GIT_COMMIT} \
+	   -X github.com/openfaas/faas-cli/version.Version=${.GIT_VERSION}" \
+	    -o ./bin/faas-cli-darwin-arm64
+
+
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build --ldflags "-s -w \
+	   -X github.com/openfaas/faas-cli/version.GitCommit=${.GIT_COMMIT} \
+	   -X github.com/openfaas/faas-cli/version.Version=${.GIT_VERSION}" \
+	    -o ./bin/faas-cli.exe
+
 
 .PHONY: test-unit
 test-unit:

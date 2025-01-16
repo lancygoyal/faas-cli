@@ -202,6 +202,35 @@ spec:
 		Branch:     "",
 		Version:    "",
 	},
+	{
+		Name: "Read-only root filesystem",
+		Input: `
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:8080
+functions:
+ url-ping:
+  lang: python
+  handler: ./sample/url-ping
+  image: alexellis/faas-url-ping:0.2
+  readonly_root_filesystem: true`,
+		Output: []string{`---
+apiVersion: openfaas.com/v1
+kind: Function
+metadata:
+  name: url-ping
+  namespace: openfaas-fn
+spec:
+  name: url-ping
+  image: alexellis/faas-url-ping:0.2
+  readOnlyRootFilesystem: true
+`},
+		Format:     schema.DefaultFormat,
+		APIVersion: "openfaas.com/v1",
+		Namespace:  "openfaas-fn",
+		Branch:     "",
+		Version:    "",
+	},
 }
 
 func Test_generateCRDYAML(t *testing.T) {
@@ -218,7 +247,8 @@ func Test_generateCRDYAML(t *testing.T) {
 		}
 		services := *parsedServices
 
-		generatedYAML, err := generateCRDYAML(services, testcase.Format, testcase.APIVersion, testcase.Namespace, testcase.Branch, testcase.Version)
+		generatedYAML, err := generateCRDYAML(services, testcase.Format, testcase.APIVersion, testcase.Namespace,
+			NewFunctionMetadataSourceStub(testcase.Branch, testcase.Version))
 		if err != nil {
 			t.Fatalf("%s failed: error while generating CRD YAML", testcase.Name)
 		}
@@ -227,7 +257,22 @@ func Test_generateCRDYAML(t *testing.T) {
 			t.Fatalf("%s failed: want:\n%q, but got:\n%q", testcase.Name, testcase.Output, generatedYAML)
 		}
 	}
+}
 
+type FunctionMetadataSourceStub struct {
+	version string
+	branch  string
+}
+
+func NewFunctionMetadataSourceStub(branch, version string) FunctionMetadataSourceStub {
+	return FunctionMetadataSourceStub{
+		version: version,
+		branch:  branch,
+	}
+}
+
+func (f FunctionMetadataSourceStub) Get(tagType schema.BuildFormat, contextPath string) (branch, version string, err error) {
+	return f.branch, f.version, nil
 }
 
 func stringInSlice(a string, list []string) bool {
@@ -242,7 +287,7 @@ func stringInSlice(a string, list []string) bool {
 func Test_filterStoreItem_Found(t *testing.T) {
 
 	items := []v2.StoreFunction{
-		v2.StoreFunction{
+		{
 			Name: "figlet",
 		},
 	}
@@ -264,7 +309,7 @@ func Test_filterStoreItem_Found(t *testing.T) {
 func Test_filterStoreItem_NotFound(t *testing.T) {
 
 	items := []v2.StoreFunction{
-		v2.StoreFunction{
+		{
 			Name: "figlets",
 		},
 	}
@@ -300,7 +345,7 @@ var generateOrderedTestcases = []struct {
 provider:
   name: openfaas
   gateway: http://127.0.0.1:8080
-  network: "func_functions"      
+  network: "func_functions"    
 functions:
  fn1:
   lang: python3
@@ -357,7 +402,7 @@ functions:
 provider:
   name: openfaas
   gateway: http://127.0.0.1:8080
-  network: "func_functions"      
+  network: "func_functions"    
 functions:
  fn3:
   lang: python3
@@ -414,7 +459,7 @@ functions:
 provider:
   name: openfaas
   gateway: http://127.0.0.1:8080
-  network: "func_functions"      
+  network: "func_functions"    
 functions:
  fn3:
   lang: python3

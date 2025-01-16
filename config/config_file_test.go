@@ -4,8 +4,8 @@
 package config
 
 import (
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"regexp"
 	"strings"
@@ -13,7 +13,7 @@ import (
 )
 
 func Test_LookupAuthConfig_WithNoConfigFile(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -27,6 +27,10 @@ func Test_LookupAuthConfig_WithNoConfigFile(t *testing.T) {
 		t.Errorf("Error was not returned")
 	}
 
+	if !errors.Is(err, ErrConfigNotFound) {
+		t.Errorf("Error was not ErrConfigNotFound")
+	}
+
 	r := regexp.MustCompile(`(?m:config file not found)`)
 	if !r.MatchString(err.Error()) {
 		t.Errorf("Error not matched: %s", err.Error())
@@ -34,7 +38,7 @@ func Test_LookupAuthConfig_WithNoConfigFile(t *testing.T) {
 }
 
 func Test_LookupAuthConfig_GatewayWithNoConfig(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -43,11 +47,16 @@ func Test_LookupAuthConfig_GatewayWithNoConfig(t *testing.T) {
 	os.Setenv(ConfigLocationEnv, configDir)
 	defer os.Unsetenv(ConfigLocationEnv)
 
+	var authConfigNotFoundError *AuthConfigNotFoundError
 	u := "admin"
 	p := "some pass"
 	gatewayURL := strings.TrimRight("http://openfaas.test/", "/")
 	token := EncodeAuth(u, p)
-	err = UpdateAuthConfig(gatewayURL, token, BasicAuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL,
+		Token:   token,
+		Auth:    BasicAuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}
@@ -57,6 +66,10 @@ func Test_LookupAuthConfig_GatewayWithNoConfig(t *testing.T) {
 		t.Errorf("Error was not returned")
 	}
 
+	if !errors.As(err, &authConfigNotFoundError) {
+		t.Errorf("Error was not AuthConfigNotFoundError")
+	}
+
 	r := regexp.MustCompile(`(?m:no auth config found for)`)
 	if !r.MatchString(err.Error()) {
 		t.Errorf("Error not matched: %s", err.Error())
@@ -64,7 +77,7 @@ func Test_LookupAuthConfig_GatewayWithNoConfig(t *testing.T) {
 }
 
 func Test_UpdateAuthConfig_Insert(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -77,7 +90,11 @@ func Test_UpdateAuthConfig_Insert(t *testing.T) {
 	p := "some pass"
 	gatewayURL := strings.TrimRight("http://openfaas.test/", "/")
 	token := EncodeAuth(u, p)
-	err = UpdateAuthConfig(gatewayURL, token, BasicAuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL,
+		Token:   token,
+		Auth:    BasicAuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}
@@ -100,7 +117,7 @@ func Test_UpdateAuthConfig_Insert(t *testing.T) {
 }
 
 func Test_UpdateAuthConfig_Update(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -113,7 +130,11 @@ func Test_UpdateAuthConfig_Update(t *testing.T) {
 	p := "pass"
 	gatewayURL := strings.TrimRight("http://openfaas.test/", "/")
 	token := EncodeAuth(u, p)
-	err = UpdateAuthConfig(gatewayURL, token, BasicAuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL,
+		Token:   token,
+		Auth:    BasicAuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}
@@ -134,7 +155,11 @@ func Test_UpdateAuthConfig_Update(t *testing.T) {
 	u = "admin2"
 	p = "pass2"
 	token = EncodeAuth(u, p)
-	err = UpdateAuthConfig(gatewayURL, token, BasicAuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL,
+		Token:   token,
+		Auth:    BasicAuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}
@@ -156,7 +181,11 @@ func Test_UpdateAuthConfig_Update(t *testing.T) {
 
 func Test_UpdateAuthConfig_InvaidGatewayURL(t *testing.T) {
 	gateway := "http//test.test"
-	err := UpdateAuthConfig(gateway, "a", "b")
+	err := UpdateAuthConfig(AuthConfig{
+		Gateway: gateway,
+		Token:   "a",
+		Auth:    "b",
+	})
 	if err == nil {
 		t.Errorf("Error was not returned")
 	}
@@ -169,7 +198,11 @@ func Test_UpdateAuthConfig_InvaidGatewayURL(t *testing.T) {
 
 func Test_UpdateAuthConfig_EmptyGatewayURL(t *testing.T) {
 	gateway := ""
-	err := UpdateAuthConfig(gateway, "a", "b")
+	err := UpdateAuthConfig(AuthConfig{
+		Gateway: gateway,
+		Token:   "a",
+		Auth:    "b",
+	})
 	if err == nil {
 		t.Errorf("Error was not returned")
 	}
@@ -188,7 +221,7 @@ func Test_New_NoFile(t *testing.T) {
 }
 
 func Test_EnsureFile(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -222,7 +255,7 @@ func Test_DecodeAuth(t *testing.T) {
 }
 
 func Test_RemoveAuthConfig(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -235,13 +268,21 @@ func Test_RemoveAuthConfig(t *testing.T) {
 	p := "pass"
 	token := EncodeAuth(u, p)
 	gatewayURL := strings.TrimRight("http://openfaas.test/", "/")
-	err = UpdateAuthConfig(gatewayURL, token, BasicAuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL,
+		Token:   token,
+		Auth:    BasicAuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}
 
 	gatewayURL2 := strings.TrimRight("http://openfaas.test2/", "/")
-	err = UpdateAuthConfig(gatewayURL2, token, BasicAuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL2,
+		Token:   token,
+		Auth:    BasicAuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}
@@ -262,7 +303,7 @@ func Test_RemoveAuthConfig(t *testing.T) {
 }
 
 func Test_RemoveAuthConfig_WithNoConfigFile(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -274,6 +315,10 @@ func Test_RemoveAuthConfig_WithNoConfigFile(t *testing.T) {
 	err = RemoveAuthConfig("http://openfaas.test1")
 	if err == nil {
 		t.Errorf("Error was not returned")
+	}
+
+	if !errors.Is(err, ErrConfigNotFound) {
+		t.Errorf("Error was not ErrConfigNotFound")
 	}
 
 	r := regexp.MustCompile(`(?m:config file not found)`)
@@ -283,7 +328,7 @@ func Test_RemoveAuthConfig_WithNoConfigFile(t *testing.T) {
 }
 
 func Test_RemoveAuthConfig_WithUnknownGateway(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -292,11 +337,16 @@ func Test_RemoveAuthConfig_WithUnknownGateway(t *testing.T) {
 	os.Setenv(ConfigLocationEnv, configDir)
 	defer os.Unsetenv(ConfigLocationEnv)
 
+	var authConfigNotFoundError *AuthConfigNotFoundError
 	u := "admin"
 	p := "pass"
 	token := EncodeAuth(u, p)
 	gatewayURL := strings.TrimRight("http://openfaas.test/", "/")
-	err = UpdateAuthConfig(gatewayURL, token, BasicAuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL,
+		Token:   token,
+		Auth:    BasicAuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}
@@ -306,14 +356,18 @@ func Test_RemoveAuthConfig_WithUnknownGateway(t *testing.T) {
 		t.Errorf("Error was not returned")
 	}
 
-	r := regexp.MustCompile(`(?m:gateway)`)
+	if !errors.As(err, &authConfigNotFoundError) {
+		t.Errorf("Error was not AuthConfigNotFoundError")
+	}
+
+	r := regexp.MustCompile(`(?m:no auth config found for)`)
 	if !r.MatchString(err.Error()) {
 		t.Errorf("Error not matched: %s", err.Error())
 	}
 }
 
 func Test_UpdateAuthConfig_Oauth2Insert(t *testing.T) {
-	configDir, err := ioutil.TempDir("", "faas-cli-file-test")
+	configDir, err := os.MkdirTemp("", "faas-cli-file-test")
 	if err != nil {
 		t.Fatalf("can not create test config directory: %s", err)
 	}
@@ -324,7 +378,11 @@ func Test_UpdateAuthConfig_Oauth2Insert(t *testing.T) {
 
 	token := "somebase64encodedstring"
 	gatewayURL := strings.TrimRight("http://openfaas.test/", "/")
-	err = UpdateAuthConfig(gatewayURL, token, Oauth2AuthType)
+	err = UpdateAuthConfig(AuthConfig{
+		Gateway: gatewayURL,
+		Token:   token,
+		Auth:    Oauth2AuthType,
+	})
 	if err != nil {
 		t.Fatalf("unexpected error when updating auth config: %s", err)
 	}

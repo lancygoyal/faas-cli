@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -156,8 +157,16 @@ func printFunctionDescription(dst io.Writer, funcDesc schema.FunctionDescription
 	out.Printf("Function Process:\t%s\n", process)
 	out.Printf("URL:\t%s\n", funcDesc.URL)
 	out.Printf("Async URL:\t%s\n", funcDesc.AsyncURL)
-	out.Printf("Labels", *funcDesc.Labels)
-	out.Printf("Annotations", *funcDesc.Annotations)
+	if funcDesc.Labels != nil {
+		out.Printf("Labels", *funcDesc.Labels)
+	} else {
+		out.Printf("Labels", map[string]string{})
+	}
+	if funcDesc.Annotations != nil {
+		out.Printf("Annotations", *funcDesc.Annotations)
+	} else {
+		out.Printf("Annotations", map[string]string{})
+	}
 	out.Printf("Constraints", funcDesc.Constraints)
 	out.Printf("Environment", funcDesc.EnvVars)
 	out.Printf("Secrets", funcDesc.Secrets)
@@ -225,6 +234,15 @@ func printMap(w io.Writer, name string, m map[string]string, verbose bool) {
 	}
 
 	fmt.Fprintf(w, "%s:\n", name)
+
+	if name == "Environment" {
+		orderedKeys := generateMapOrder(m)
+		for _, keyName := range orderedKeys {
+			fmt.Fprintln(w, "\t "+keyName+": "+m[keyName])
+		}
+		return
+	}
+
 	for key, value := range m {
 		fmt.Fprintln(w, "\t "+key+": "+value)
 	}
@@ -255,13 +273,13 @@ func printResources(w io.Writer, name string, data *types.FunctionResources, ver
 		return
 	}
 
-	fmt.Fprintf(w, name+":")
-
+	header := name + ":"
 	if data == nil {
-		fmt.Fprintln(w, "\t <none>")
+		fmt.Fprintln(w, header+"\t <none>")
 		return
 	}
 
+	fmt.Fprintln(w, header)
 	fmt.Fprintln(w, "\t CPU: "+data.CPU)
 	fmt.Fprintln(w, "\t Memory: "+data.Memory)
 
@@ -285,4 +303,17 @@ func isEmpty(a interface{}) bool {
 		return v.IsNil()
 	}
 	return false
+}
+
+func generateMapOrder(m map[string]string) []string {
+
+	var keyNames []string
+
+	for keyName := range m {
+		keyNames = append(keyNames, keyName)
+	}
+
+	sort.Strings(keyNames)
+
+	return keyNames
 }

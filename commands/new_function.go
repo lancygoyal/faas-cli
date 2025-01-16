@@ -126,10 +126,10 @@ Download templates:
 	}
 
 	templateAddress := getTemplateURL("", os.Getenv(templateURLEnvironment), DefaultTemplateRepository)
-	PullTemplates(templateAddress)
+	pullTemplates(templateAddress)
 
 	if !stack.IsValidTemplate(language) {
-		return fmt.Errorf("%s is unavailable or not supported", language)
+		return fmt.Errorf("template: \"%s\" was not found in the templates directory", language)
 	}
 
 	var fileName, outputMsg string
@@ -327,7 +327,7 @@ func printAvailableTemplates(availableTemplates []string) string {
 }
 
 func duplicateFunctionName(functionName string, appendFile string) error {
-	fileBytes, readErr := ioutil.ReadFile(appendFile)
+	fileBytes, readErr := os.ReadFile(appendFile)
 	if readErr != nil {
 		return fmt.Errorf("unable to read %s to append, %s", appendFile, readErr)
 	}

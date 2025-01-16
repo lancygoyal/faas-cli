@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -13,12 +13,13 @@ import (
 	types "github.com/openfaas/faas-provider/types"
 )
 
-//ScaleFunction scale a function
+// ScaleFunction scale a function
 func (c *Client) ScaleFunction(ctx context.Context, functionName, namespace string, replicas uint64) error {
 
 	scaleReq := types.ScaleServiceRequest{
 		ServiceName: functionName,
 		Replicas:    replicas,
+		Namespace:   namespace,
 	}
 
 	var err error
@@ -28,9 +29,6 @@ func (c *Client) ScaleFunction(ctx context.Context, functionName, namespace stri
 
 	functionPath := filepath.Join(scalePath, functionName)
 	query := url.Values{}
-	if len(namespace) > 0 {
-		query.Add("namespace", namespace)
-	}
 
 	req, err := c.newRequest(http.MethodPost, functionPath, query, bodyReader)
 	if err != nil {
@@ -59,7 +57,7 @@ func (c *Client) ScaleFunction(ctx context.Context, functionName, namespace stri
 
 	default:
 		var bodyReadErr error
-		bytesOut, bodyReadErr := ioutil.ReadAll(res.Body)
+		bytesOut, bodyReadErr := io.ReadAll(res.Body)
 		if bodyReadErr != nil {
 			return bodyReadErr
 		}

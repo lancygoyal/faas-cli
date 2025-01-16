@@ -5,13 +5,16 @@ package proxy
 
 import (
 	"bytes"
+	"io"
 	"os"
+	"runtime"
 
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/openfaas/faas-cli/version"
 )
 
 // InvokeFunction a function
@@ -58,6 +61,8 @@ func InvokeFunction(gateway string, name string, bytesIn *[]byte, contentType st
 		return nil, fmt.Errorf("cannot connect to OpenFaaS on URL: %s", gateway)
 	}
 
+	req.Header.Set("User-Agent", fmt.Sprintf("faas-cli/%s (openfaas; %s; %s)", version.BuildVersion(), runtime.GOOS, runtime.GOARCH))
+
 	req.Header.Add("Content-Type", contentType)
 	// Add additional headers to request
 	for name, value := range headerMap {
@@ -69,7 +74,6 @@ func InvokeFunction(gateway string, name string, bytesIn *[]byte, contentType st
 	// SetAuth(req, gateway)
 
 	res, err := client.Do(req)
-
 	if err != nil {
 		fmt.Println()
 		fmt.Println(err)
@@ -83,16 +87,16 @@ func InvokeFunction(gateway string, name string, bytesIn *[]byte, contentType st
 	switch res.StatusCode {
 	case http.StatusAccepted:
 		fmt.Fprintf(os.Stderr, "Function submitted asynchronously.\n")
-	case http.StatusOK:
+	case http.StatusOK, http.StatusCreated:
 		var readErr error
-		resBytes, readErr = ioutil.ReadAll(res.Body)
+		resBytes, readErr = io.ReadAll(res.Body)
 		if readErr != nil {
 			return nil, fmt.Errorf("cannot read result from OpenFaaS on URL: %s %s", gateway, readErr)
 		}
 	case http.StatusUnauthorized:
 		return nil, fmt.Errorf("unauthorized access, run \"faas-cli login\" to setup authentication for this server")
 	default:
-		bytesOut, err := ioutil.ReadAll(res.Body)
+		bytesOut, err := io.ReadAll(res.Body)
 		if err == nil {
 			return nil, fmt.Errorf("server returned unexpected status code: %d - %s", res.StatusCode, string(bytesOut))
 		}

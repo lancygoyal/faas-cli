@@ -4,11 +4,18 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
+	"path"
+	"runtime"
 	"strings"
+	"syscall"
 
-	"github.com/docker/docker/pkg/term"
+	"github.com/moby/term"
+	"github.com/openfaas/faas-cli/stack"
 	"github.com/openfaas/faas-cli/version"
 	"github.com/spf13/cobra"
 )
@@ -41,6 +48,9 @@ var (
 	tlsInsecure  bool
 )
 
+// Services parsed from stack file
+var services *stack.Services
+
 var stat = func(filename string) (os.FileInfo, error) {
 	return os.Stat(filename)
 }
@@ -68,13 +78,61 @@ func init() {
 	_ = faasCmd.PersistentFlags().SetAnnotation("yaml", cobra.BashCompFilenameExt, validYAMLFilenames)
 }
 
-// Execute TODO
 func Execute(customArgs []string) {
 	checkAndSetDefaultYaml()
 
 	faasCmd.SilenceUsage = true
 	faasCmd.SilenceErrors = true
 	faasCmd.SetArgs(customArgs[1:])
+
+	args1 := os.Args[1:]
+	cmd1, _, _ := faasCmd.Find(args1)
+
+	plugins, err := getPlugins()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if cmd1 != nil && len(args1) > 0 {
+		found := ""
+		for _, plugin := range plugins {
+			pluginName := args1[0]
+			if runtime.GOOS == "windows" {
+				pluginName = fmt.Sprintf("%s.exe", args1[0])
+			}
+
+			if path.Base(plugin) == pluginName {
+				found = plugin
+			}
+		}
+		if len(found) > 0 {
+			// If we have found the plugin then sysexec it by replacing the current process.
+			// On Windows we use the os/exec package to run the plugins since replacing the current
+			// process with syscall.exec is not supported.
+			if runtime.GOOS == "windows" {
+				cmd := exec.Command(found, os.Args[2:]...)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err != nil {
+					var exitErr *exec.ExitError
+					if errors.As(err, &exitErr) {
+						os.Exit(exitErr.ExitCode())
+					} else {
+						fmt.Println("Error from plugin", err)
+						os.Exit(127)
+					}
+				}
+				return
+			} else {
+				if err := syscall.Exec(found, append([]string{found}, os.Args[2:]...), os.Environ()); err != nil {
+					fmt.Fprintf(os.Stderr, "Error from plugin: %v", err)
+					os.Exit(127)
+				}
+				return
+			}
+		}
+	}
+
 	if err := faasCmd.Execute(); err != nil {
 		e := err.Error()
 		fmt.Println(strings.ToUpper(e[:1]) + e[1:])
@@ -103,4 +161,29 @@ Manage your OpenFaaS functions from the command line`,
 func runFaas(cmd *cobra.Command, args []string) {
 	printLogo()
 	cmd.Help()
+}
+
+func getPlugins() ([]string, error) {
+	plugins := []string{}
+	var pluginHome string
+	if runtime.GOOS == "windows" {
+		pluginHome = os.Expand("$HOMEPATH/.openfaas/plugins", os.Getenv)
+	} else {
+		pluginHome = os.ExpandEnv("$HOME/.openfaas/plugins")
+	}
+
+	if _, err := os.Stat(pluginHome); err != nil && os.IsNotExist(err) {
+		return plugins, nil
+	}
+
+	res, err := os.ReadDir(pluginHome)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range res {
+		plugins = append(plugins, path.Join(pluginHome, file.Name()))
+	}
+
+	return plugins, nil
 }

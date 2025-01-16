@@ -2,9 +2,15 @@ package commands
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"time"
+
+	"github.com/openfaas/faas-cli/config"
+	"github.com/openfaas/go-sdk"
 )
 
 var (
@@ -35,4 +41,81 @@ func GetDefaultCLITransport(tlsInsecure bool, timeout *time.Duration) *http.Tran
 		return tr
 	}
 	return nil
+}
+
+func GetDefaultSDKClient() (*sdk.Client, error) {
+	var yamlUrl string
+	if services != nil {
+		yamlUrl = services.Provider.GatewayURL
+	}
+
+	gatewayAddress := getGatewayURL(gateway, defaultGateway, yamlUrl, os.Getenv(openFaaSURLEnvironment))
+	gatewayURL, err := url.Parse(gatewayAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	authConfig, err := config.LookupAuthConfig(gatewayURL.String())
+	if err != nil {
+		fmt.Printf("Failed to lookup auth config: %s\n", err)
+	}
+
+	var clientAuth sdk.ClientAuth
+	var functionTokenSource sdk.TokenSource
+	if authConfig.Auth == config.BasicAuthType {
+		username, password, err := config.DecodeAuth(authConfig.Token)
+		if err != nil {
+			return nil, err
+		}
+
+		clientAuth = &sdk.BasicAuth{
+			Username: username,
+			Password: password,
+		}
+	}
+
+	if authConfig.Auth == config.Oauth2AuthType {
+		tokenAuth := &StaticTokenAuth{
+			token: authConfig.Token,
+		}
+
+		clientAuth = tokenAuth
+		functionTokenSource = tokenAuth
+	}
+
+	// User specified token gets priority
+	if len(token) > 0 {
+		tokenAuth := &StaticTokenAuth{
+			token: token,
+		}
+
+		clientAuth = tokenAuth
+		functionTokenSource = tokenAuth
+	}
+
+	httpClient := &http.Client{}
+	httpClient.Timeout = commandTimeout
+
+	transport := GetDefaultCLITransport(tlsInsecure, &commandTimeout)
+	if transport != nil {
+		httpClient.Transport = transport
+	}
+
+	return sdk.NewClientWithOpts(gatewayURL, httpClient,
+		sdk.WithAuthentication(clientAuth),
+		sdk.WithFunctionTokenSource(functionTokenSource),
+	), nil
+}
+
+type StaticTokenAuth struct {
+	token string
+}
+
+func (a *StaticTokenAuth) Set(req *http.Request) error {
+	req.Header.Add("Authorization", "Bearer "+a.token)
+	return nil
+}
+
+func (ts *StaticTokenAuth) Token() (string, error) {
+	return ts.token, nil
 }

@@ -6,22 +6,25 @@ package commands
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/openfaas/faas-cli/builder"
 	"github.com/openfaas/faas-cli/proxy"
 	"github.com/openfaas/faas-cli/schema"
 	"github.com/openfaas/faas-cli/stack"
+	"github.com/openfaas/faas-cli/util"
+
 	"github.com/spf13/cobra"
-	yaml "gopkg.in/yaml.v2"
+	yaml "gopkg.in/yaml.v3"
 )
 
 var (
 	// readTemplate controls whether we should read the function's template when deploying.
-	readTemplate bool
+	readTemplate    bool
+	timeoutOverride time.Duration
 )
 
 // DeployFlags holds flags that are to be added to commands.
@@ -71,6 +74,13 @@ func init() {
 	// Set bash-completion.
 	_ = deployCmd.Flags().SetAnnotation("handler", cobra.BashCompSubdirsInDir, []string{})
 	deployCmd.Flags().BoolVar(&readTemplate, "read-template", true, "Read the function's template")
+
+	deployCmd.Flags().DurationVar(&timeoutOverride, "timeout", commandTimeout, "Timeout for any HTTP calls made to the OpenFaaS API.")
+
+	deployCmd.Flags().StringVar(&cpuRequest, "cpu-request", "", "Supply the CPU request for the function in Mi (when not using a YAML file)")
+	deployCmd.Flags().StringVar(&cpuLimit, "cpu-limit", "", "Supply the CPU limit for the function in Mi (when not using a YAML file)")
+	deployCmd.Flags().StringVar(&memoryRequest, "memory-request", "", "Supply the memory request for the function in Mi (when not using a YAML file)")
+	deployCmd.Flags().StringVar(&memoryLimit, "memory-limit", "", "Supply the memory limit for the function in Mi (when not using a YAML file)")
 
 	faasCmd.AddCommand(deployCmd)
 }
@@ -147,14 +157,13 @@ func runDeployCommand(args []string, image string, fprocess string, functionName
 			return err
 		}
 
-		parsedServices.Provider.GatewayURL = getGatewayURL(gateway, defaultGateway, parsedServices.Provider.GatewayURL, os.Getenv(openFaaSURLEnvironment))
-
 		if parsedServices != nil {
+			parsedServices.Provider.GatewayURL = getGatewayURL(gateway, defaultGateway, parsedServices.Provider.GatewayURL, os.Getenv(openFaaSURLEnvironment))
 			services = *parsedServices
 		}
 	}
 
-	transport := GetDefaultCLITransport(tlsInsecure, &commandTimeout)
+	transport := GetDefaultCLITransport(tlsInsecure, &timeoutOverride)
 	ctx := context.Background()
 
 	var failedStatusCodes = make(map[string]int)
@@ -164,7 +173,8 @@ func runDeployCommand(args []string, image string, fprocess string, functionName
 		if err != nil {
 			return err
 		}
-		proxyClient, err := proxy.NewClient(cliAuth, services.Provider.GatewayURL, transport, &commandTimeout)
+
+		proxyClient, err := proxy.NewClient(cliAuth, services.Provider.GatewayURL, transport, &timeoutOverride)
 		if err != nil {
 			return err
 		}
@@ -184,7 +194,7 @@ func runDeployCommand(args []string, image string, fprocess string, functionName
 			}
 
 			if len(function.Secrets) > 0 {
-				functionSecrets = mergeSlice(function.Secrets, functionSecrets)
+				functionSecrets = util.MergeSlice(function.Secrets, functionSecrets)
 			}
 
 			// Check if there is a functionNamespace flag passed, if so, override the namespace value
@@ -201,12 +211,12 @@ func runDeployCommand(args []string, image string, fprocess string, functionName
 				labelMap = *function.Labels
 			}
 
-			labelArgumentMap, labelErr := parseMap(deployFlags.labelOpts, "label")
+			labelArgumentMap, labelErr := util.ParseMap(deployFlags.labelOpts, "label")
 			if labelErr != nil {
 				return fmt.Errorf("error parsing labels: %v", labelErr)
 			}
 
-			allLabels := mergeMap(labelMap, labelArgumentMap)
+			allLabels := util.MergeMap(labelMap, labelArgumentMap)
 
 			allEnvironment, envErr := compileEnvironment(deployFlags.envvarOpts, function.Environment, fileEnvironment)
 			if envErr != nil {
@@ -236,14 +246,14 @@ Error: %s`, fprocessErr.Error())
 				annotations = *function.Annotations
 			}
 
-			annotationArgs, annotationErr := parseMap(deployFlags.annotationOpts, "annotation")
+			annotationArgs, annotationErr := util.ParseMap(deployFlags.annotationOpts, "annotation")
 			if annotationErr != nil {
 				return fmt.Errorf("error parsing annotations: %v", annotationErr)
 			}
 
-			allAnnotations := mergeMap(annotations, annotationArgs)
+			allAnnotations := util.MergeMap(annotations, annotationArgs)
 
-			branch, sha, err := builder.GetImageTagValues(tagMode)
+			branch, sha, err := builder.GetImageTagValues(tagMode, function.Handler)
 			if err != nil {
 				return err
 			}
@@ -283,8 +293,9 @@ Error: %s`, fprocessErr.Error())
 		}
 	} else {
 		if len(image) == 0 || len(functionName) == 0 {
-			return fmt.Errorf("To deploy a function give --yaml/-f or a --image and --name flag")
+			return fmt.Errorf("to deploy a function give --yaml/-f or a --image and --name flag")
 		}
+
 		gateway = getGatewayURL(gateway, defaultGateway, "", os.Getenv(openFaaSURLEnvironment))
 		cliAuth, err := proxy.NewCLIAuth(token, gateway)
 		if err != nil {
@@ -298,8 +309,21 @@ Error: %s`, fprocessErr.Error())
 		// default to a readable filesystem until we get more input about the expected behavior
 		// and if we want to add another flag for this case
 		defaultReadOnlyRFS := false
-		statusCode, err := deployImage(ctx, proxyClient, image, fprocess, functionName, "", deployFlags,
-			tlsInsecure, defaultReadOnlyRFS, token, functionNamespace)
+		statusCode, err := deployImage(ctx,
+			proxyClient,
+			image,
+			fprocess,
+			functionName,
+			"",
+			deployFlags,
+			tlsInsecure,
+			defaultReadOnlyRFS,
+			token,
+			functionNamespace,
+			cpuRequest,
+			cpuLimit,
+			memoryRequest,
+			memoryLimit)
 		if err != nil {
 			return err
 		}
@@ -329,23 +353,26 @@ func deployImage(
 	readOnlyRootFilesystem bool,
 	token string,
 	namespace string,
+	cpuRequest string,
+	cpuLimit string,
+	memoryRequest string,
+	memoryLimit string,
 ) (int, error) {
 
 	var statusCode int
 	readOnlyRFS := deployFlags.readOnlyRootFilesystem || readOnlyRootFilesystem
-	envvars, err := parseMap(deployFlags.envvarOpts, "env")
-
+	envvars, err := util.ParseMap(deployFlags.envvarOpts, "env")
 	if err != nil {
 		return statusCode, fmt.Errorf("error parsing envvars: %v", err)
 	}
 
-	labelMap, labelErr := parseMap(deployFlags.labelOpts, "label")
+	labelMap, labelErr := util.ParseMap(deployFlags.labelOpts, "label")
 
 	if labelErr != nil {
 		return statusCode, fmt.Errorf("error parsing labels: %v", labelErr)
 	}
 
-	annotationMap, annotationErr := parseMap(deployFlags.annotationOpts, "annotation")
+	annotationMap, annotationErr := util.ParseMap(deployFlags.annotationOpts, "annotation")
 
 	if annotationErr != nil {
 		return statusCode, fmt.Errorf("error parsing annotations: %v", annotationErr)
@@ -371,6 +398,19 @@ func deployImage(
 		Namespace:               namespace,
 	}
 
+	if len(cpuRequest) > 0 || len(memoryRequest) > 0 {
+		deploySpec.FunctionResourceRequest.Requests = &stack.FunctionResources{
+			CPU:    cpuRequest,
+			Memory: memoryRequest,
+		}
+	}
+	if len(cpuLimit) > 0 || len(memoryLimit) > 0 {
+		deploySpec.FunctionResourceRequest.Limits = &stack.FunctionResources{
+			CPU:    cpuLimit,
+			Memory: memoryLimit,
+		}
+	}
+
 	if msg := checkTLSInsecure(gateway, deploySpec.TLSInsecure); len(msg) > 0 {
 		fmt.Println(msg)
 	}
@@ -380,36 +420,18 @@ func deployImage(
 	return statusCode, nil
 }
 
-func mergeSlice(values []string, overlay []string) []string {
-	results := []string{}
-	added := make(map[string]bool)
-	for _, value := range overlay {
-		results = append(results, value)
-		added[value] = true
-	}
-
-	for _, value := range values {
-		if exists := added[value]; exists == false {
-			results = append(results, value)
-		}
-	}
-
-	return results
-}
-
 func readFiles(files []string) (map[string]string, error) {
 	envs := make(map[string]string)
 
 	for _, file := range files {
-		bytesOut, readErr := ioutil.ReadFile(file)
-		if readErr != nil {
-			return nil, readErr
+		bytesOut, err := os.ReadFile(file)
+		if err != nil {
+			return nil, err
 		}
 
 		envFile := stack.EnvironmentFile{}
-		unmarshalErr := yaml.Unmarshal(bytesOut, &envFile)
-		if unmarshalErr != nil {
-			return nil, unmarshalErr
+		if err := yaml.Unmarshal(bytesOut, &envFile); err != nil {
+			return nil, err
 		}
 		for k, v := range envFile.Environment {
 			envs[k] = v
@@ -418,52 +440,22 @@ func readFiles(files []string) (map[string]string, error) {
 	return envs, nil
 }
 
-func parseMap(envvars []string, keyName string) (map[string]string, error) {
-	result := make(map[string]string)
-	for _, envvar := range envvars {
-		s := strings.SplitN(strings.TrimSpace(envvar), "=", 2)
-		if len(s) != 2 {
-			return nil, fmt.Errorf("label format is not correct, needs key=value")
-		}
-		envvarName := s[0]
-		envvarValue := s[1]
-
-		if !(len(envvarName) > 0) {
-			return nil, fmt.Errorf("empty %s name: [%s]", keyName, envvar)
-		}
-		if !(len(envvarValue) > 0) {
-			return nil, fmt.Errorf("empty %s value: [%s]", keyName, envvar)
-		}
-
-		result[envvarName] = envvarValue
-	}
-	return result, nil
-}
-
-func mergeMap(i map[string]string, j map[string]string) map[string]string {
-	merged := make(map[string]string)
-
-	for k, v := range i {
-		merged[k] = v
-	}
-	for k, v := range j {
-		merged[k] = v
-	}
-	return merged
-}
-
 func compileEnvironment(envvarOpts []string, yamlEnvironment map[string]string, fileEnvironment map[string]string) (map[string]string, error) {
-	envvarArguments, err := parseMap(envvarOpts, "env")
+	envvarArguments, err := util.ParseMap(envvarOpts, "env")
 	if err != nil {
 		return nil, fmt.Errorf("error parsing envvars: %v", err)
 	}
 
-	functionAndStack := mergeMap(yamlEnvironment, fileEnvironment)
-	return mergeMap(functionAndStack, envvarArguments), nil
+	functionAndStack := util.MergeMap(yamlEnvironment, fileEnvironment)
+	return util.MergeMap(functionAndStack, envvarArguments), nil
 }
 
 func deriveFprocess(function stack.Function) (string, error) {
 	var fprocess string
+
+	if function.FProcess != "" {
+		return function.FProcess, nil
+	}
 
 	pathToTemplateYAML := "./template/" + function.Language + "/template.yml"
 	if _, err := os.Stat(pathToTemplateYAML); os.IsNotExist(err) {
@@ -490,26 +482,6 @@ func languageExistsNotDockerfile(language string) bool {
 	return len(language) > 0 && strings.ToLower(language) != "dockerfile"
 }
 
-type authConfig struct {
-	Auth string `json:"auth,omitempty"`
-}
-
-type configFile struct {
-	AuthConfigs      map[string]authConfig `json:"auths"`
-	CredentialsStore string                `json:"credsStore,omitempty"`
-}
-
-const (
-	// docker default settings
-	configFileName        = "config.json"
-	configFileDir         = ".docker"
-	defaultDockerRegistry = "https://index.docker.io/v1/"
-)
-
-var (
-	configDir = os.Getenv("DOCKER_CONFIG")
-)
-
 func deployFailed(status map[string]int) error {
 	if len(status) == 0 {
 		return nil
@@ -517,7 +489,7 @@ func deployFailed(status map[string]int) error {
 
 	var allErrors []string
 	for funcName, funcStatus := range status {
-		err := fmt.Errorf("Function '%s' failed to deploy with status code: %d", funcName, funcStatus)
+		err := fmt.Errorf("function '%s' failed to deploy with status code: %d", funcName, funcStatus)
 		allErrors = append(allErrors, err.Error())
 	}
 	return fmt.Errorf(strings.Join(allErrors, "\n"))

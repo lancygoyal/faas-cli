@@ -7,7 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +30,7 @@ func init() {
 	registryLoginCommand.Flags().String("password", "", "The registry password")
 	registryLoginCommand.Flags().BoolP("password-stdin", "s", false, "Reads the docker password from stdin, either pipe to the command or remember to press ctrl+d when reading interactively")
 
-	registryLoginCommand.Flags().Bool("ecr", false, "If we are using ECR we need a different set of flags, so if this is set, we need to set --username and --password")
+	registryLoginCommand.Flags().Bool("ecr", false, "If we are using ECR we need a different set of flags, so if this is set, we need to set --account-id and --region")
 	registryLoginCommand.Flags().String("account-id", "", "Your AWS Account id")
 	registryLoginCommand.Flags().String("region", "", "Your AWS region")
 
@@ -58,19 +58,28 @@ func generateRegistryPreRun(command *cobra.Command, args []string) error {
 		return fmt.Errorf("error with --password-stdin usage: %s", err)
 	}
 
-	_, err = command.Flags().GetBool("ecr")
+	ecr, err := command.Flags().GetBool("ecr")
 	if err != nil {
 		return fmt.Errorf("error with --ecr usage: %s", err)
 	}
 
-	_, err = command.Flags().GetString("account-id")
+	accountID, err := command.Flags().GetString("account-id")
 	if err != nil {
 		return fmt.Errorf("error with --account-id usage: %s", err)
 	}
 
-	_, err = command.Flags().GetString("region")
+	region, err := command.Flags().GetString("region")
 	if err != nil {
 		return fmt.Errorf("error with --region usage: %s", err)
+	}
+
+	if ecr {
+		if len(accountID) == 0 {
+			return fmt.Errorf("the --account-id flag is required with ECR")
+		}
+		if len(region) == 0 {
+			return fmt.Errorf("the --region flag is required with ECR")
+		}
 	}
 
 	return nil
@@ -85,27 +94,24 @@ func generateRegistryAuthFile(command *cobra.Command, _ []string) error {
 	server, _ := command.Flags().GetString("server")
 	passStdin, _ := command.Flags().GetBool("password-stdin")
 
-	if len(username) == 0 {
-		return fmt.Errorf("you must give --username (-u)")
-	}
-
-	var generateErr error
 	if ecrEnabled {
-		generateErr = generateECRFile(accountID, region)
+		if err := generateECRFile(accountID, region); err != nil {
+			return err
+		}
+
 	} else if passStdin {
 		fmt.Printf("Enter your password, hit enter then type Ctrl+D\n\nPassword: ")
-		passwordStdin, err := ioutil.ReadAll(os.Stdin)
+		passwordStdin, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return err
 		}
-		generateErr = generateFile(username, strings.TrimSpace(string(passwordStdin)), server)
+		if err := generateFile(username, strings.TrimSpace(string(passwordStdin)), server); err != nil {
+			return err
+		}
 	} else {
-		generateErr = generateFile(username, password, server)
-
-	}
-
-	if generateErr != nil {
-		return generateErr
+		if err := generateFile(username, password, server); err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("\nWrote ./credentials/config.json..OK\n")
@@ -175,10 +181,7 @@ func writeFileToFassCLITmp(fileBytes []byte) error {
 		}
 	}
 
-	writeErr := ioutil.WriteFile(filepath.Join(path, "config.json"), fileBytes, 0744)
-
-	return writeErr
-
+	return os.WriteFile(filepath.Join(path, "config.json"), fileBytes, 0744)
 }
 
 type Auth struct {

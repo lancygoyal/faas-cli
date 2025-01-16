@@ -20,6 +20,9 @@ const BranchAndSHAFormat BuildFormat = 2
 // DescribeFormat uses the git-describe output as the docker tag
 const DescribeFormat BuildFormat = 3
 
+// DigestFormat
+const DigestFormat BuildFormat = 4
+
 // Type implements pflag.Value
 func (i *BuildFormat) Type() string {
 	return "string"
@@ -56,6 +59,8 @@ func (i *BuildFormat) Set(value string) error {
 		*i = BranchAndSHAFormat
 	case "describe":
 		*i = DescribeFormat
+	case "digest":
+		*i = DigestFormat
 	default:
 		return fmt.Errorf("unknown image tag format: '%s'", value)
 	}
@@ -66,7 +71,7 @@ func (i *BuildFormat) Set(value string) error {
 func BuildImageName(format BuildFormat, image string, version string, branch string) string {
 	imageVal := image
 	splitImage := strings.Split(image, "/")
-	if strings.Contains(splitImage[len(splitImage)-1], ":") == false {
+	if !strings.Contains(splitImage[len(splitImage)-1], ":") {
 		imageVal += ":latest"
 	}
 
@@ -79,6 +84,14 @@ func BuildImageName(format BuildFormat, image string, version string, branch str
 		// should we trim the existing image tag and do a proper replace with
 		// the describe describe value
 		return imageVal + "-" + version
+	case DigestFormat:
+
+		if lastIndex := strings.LastIndex(imageVal, ":"); lastIndex > -1 {
+			baseImage := imageVal[:lastIndex]
+			return fmt.Sprintf("%s:%s", baseImage, version)
+		} else {
+			return imageVal + "-" + version
+		}
 	default:
 		return imageVal
 	}

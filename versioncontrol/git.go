@@ -38,8 +38,22 @@ var GitCheckRefName = &vcsCmd{
 	scheme: []string{"git", "https", "http", "git+ssh", "ssh"},
 }
 
-// GitInitRepo initializes the working directory add commit all files & directories
-var GitInitRepo = &vcsCmd{
+// GitInitRepo initializes the working directory add commit all files & directories for Git 2.28.0+
+var GitInitRepo2_28_0 = &vcsCmd{
+	name: "Git",
+	cmd:  "git",
+	cmds: []string{
+		"init {dir} --initial-branch=master",
+		"config core.autocrlf false",
+		"config user.email \"contact@openfaas.com\"",
+		"config user.name \"OpenFaaS\"",
+		"add {dir}",
+		"commit -m \"Test-commit\"",
+	},
+	scheme: []string{"git", "https", "http", "git+ssh", "ssh"},
+}
+
+var GitInitRepoClassic = &vcsCmd{
 	name: "Git",
 	cmd:  "git",
 	cmds: []string{

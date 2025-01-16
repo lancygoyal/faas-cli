@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"io/ioutil"
 	"os"
 	"strings"
 )
@@ -18,7 +17,7 @@ func contains(s []string, e string) bool {
 func updateContent(content string) (updated_content string) {
 	// append files to ignore to file content if it is not already ignored
 
-	filesToIgnore := []string{"template", "build"}
+	filesToIgnore := []string{"template", "build", ".secrets"}
 
 	lines := strings.Split(content, "\n")
 
@@ -34,7 +33,7 @@ func updateContent(content string) (updated_content string) {
 }
 
 func updateGitignore() (err error) {
-	// update .gitignore file if it already present othewise creates it
+	// update .gitignore file if it already present otherwise creates it
 
 	f, err := os.OpenFile(".gitignore", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -43,7 +42,7 @@ func updateGitignore() (err error) {
 
 	defer f.Close()
 
-	content, err := ioutil.ReadFile(".gitignore")
+	content, err := os.ReadFile(".gitignore")
 	if err != nil {
 		return err
 	}

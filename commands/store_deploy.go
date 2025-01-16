@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/openfaas/faas-cli/util"
+
 	"github.com/openfaas/faas-cli/proxy"
 	"github.com/spf13/cobra"
 )
@@ -15,7 +17,6 @@ import (
 func init() {
 	// Setup flags that are used by multiple commands (variables defined in faas.go)
 	storeDeployCmd.Flags().StringVarP(&gateway, "gateway", "g", defaultGateway, "Gateway URL starting with http(s)://")
-	storeDeployCmd.Flags().StringVar(&network, "network", "", "Name of the network")
 	storeDeployCmd.Flags().StringVar(&functionName, "name", "", "Name of the deployed function (overriding name from the store)")
 	storeDeployCmd.Flags().StringVarP(&functionNamespace, "namespace", "n", "", "Namespace of the function")
 	// Setup flags that are used only by deploy command (variables defined above)
@@ -28,6 +29,12 @@ func init() {
 	storeDeployCmd.Flags().StringArrayVarP(&storeDeployFlags.annotationOpts, "annotation", "", []string{}, "Set one or more annotation (ANNOTATION=VALUE)")
 	storeDeployCmd.Flags().BoolVar(&tlsInsecure, "tls-no-verify", false, "Disable TLS validation")
 	storeDeployCmd.Flags().StringVarP(&token, "token", "k", "", "Pass a JWT token to use instead of basic auth")
+	storeDeployCmd.Flags().DurationVar(&timeoutOverride, "timeout", commandTimeout, "Timeout for any HTTP calls made to the OpenFaaS API.")
+
+	storeDeployCmd.Flags().StringVar(&cpuRequest, "cpu-request", "", "Supply the CPU request for the function in Mi")
+	storeDeployCmd.Flags().StringVar(&cpuLimit, "cpu-limit", "", "Supply the CPU limit for the function in Mi")
+	storeDeployCmd.Flags().StringVar(&memoryRequest, "memory-request", "", "Supply the memory request for the function in Mi")
+	storeDeployCmd.Flags().StringVar(&memoryLimit, "memory-limit", "", "Supply the memory limit for the function in Mi")
 
 	// Set bash-completion.
 	_ = storeDeployCmd.Flags().SetAnnotation("handler", cobra.BashCompSubdirsInDir, []string{})
@@ -39,7 +46,6 @@ var storeDeployCmd = &cobra.Command{
 	Use: `deploy (FUNCTION_NAME|FUNCTION_TITLE)
 			[--name FUNCTION_NAME]
 			[--gateway GATEWAY_URL]
-			[--network NETWORK_NAME]
 			[--env ENVVAR=VALUE ...]
 			[--label LABEL=VALUE ...]
 			[--annotation ANNOTATION=VALUE ...]
@@ -56,14 +62,19 @@ var storeDeployCmd = &cobra.Command{
   faas-cli store deploy figlet \
     --gateway=http://127.0.0.1:8080 \
     --env=MYVAR=myval`,
-	RunE: runStoreDeploy,
+	RunE:    runStoreDeploy,
+	PreRunE: preRunEStoreDeploy,
 }
 
-func runStoreDeploy(cmd *cobra.Command, args []string) error {
+func preRunEStoreDeploy(cmd *cobra.Command, args []string) error {
 	if len(args) < 1 {
 		return fmt.Errorf("please provide the function name")
 	}
 
+	return nil
+}
+
+func runStoreDeploy(cmd *cobra.Command, args []string) error {
 	targetPlatform := getTargetPlatform(platformValue)
 	storeItems, err := storeList(storeAddress)
 	if err != nil {
@@ -78,13 +89,21 @@ func runStoreDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("function '%s' not found for platform '%s'", requestedStoreFn, targetPlatform)
 	}
 
-	// Add the store environment variables to the provided ones from cmd
-	if item.Environment != nil {
-		for k, v := range item.Environment {
-			env := fmt.Sprintf("%s=%s", k, v)
-			storeDeployFlags.envvarOpts = append(storeDeployFlags.envvarOpts, env)
-		}
+	flagEnvs, err := util.ParseMap(storeDeployFlags.envvarOpts, "env")
+	if err != nil {
+		return err
 	}
+
+	// Add the store environment variables to the provided ones from cmd
+	mergedEnvs := util.MergeMap(item.Environment, flagEnvs)
+
+	envs := []string{}
+	for k, v := range mergedEnvs {
+		env := fmt.Sprintf("%s=%s", k, v)
+		envs = append(envs, env)
+	}
+
+	storeDeployFlags.envvarOpts = envs
 
 	// Add the store labels to the provided ones from cmd
 	if item.Labels != nil {
@@ -101,11 +120,6 @@ func runStoreDeploy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Use the network from manifest if not changed by user
-	if !cmd.Flag("network").Changed {
-		network = item.Network
-	}
-
 	itemName := item.Name
 
 	if functionName != "" {
@@ -119,14 +133,27 @@ func runStoreDeploy(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	transport := GetDefaultCLITransport(tlsInsecure, &commandTimeout)
-	proxyClient, err := proxy.NewClient(cliAuth, gateway, transport, &commandTimeout)
+	transport := GetDefaultCLITransport(tlsInsecure, &timeoutOverride)
+	proxyClient, err := proxy.NewClient(cliAuth, gateway, transport, &timeoutOverride)
 	if err != nil {
 		return err
 	}
 
-	statusCode, err := deployImage(context.Background(), proxyClient, imageName, item.Fprocess, itemName, "", storeDeployFlags,
-		tlsInsecure, item.ReadOnlyRootFilesystem, token, functionNamespace)
+	statusCode, err := deployImage(context.Background(),
+		proxyClient,
+		imageName,
+		item.Fprocess,
+		itemName,
+		"",
+		storeDeployFlags,
+		tlsInsecure,
+		item.ReadOnlyRootFilesystem,
+		token,
+		functionNamespace,
+		cpuRequest,
+		cpuLimit,
+		memoryRequest,
+		memoryLimit)
 
 	if badStatusCode(statusCode) {
 		failedStatusCode := map[string]int{itemName: statusCode}

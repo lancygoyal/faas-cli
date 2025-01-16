@@ -28,14 +28,13 @@ type HandlerSet struct {
 	// QueuedProxy queue work and return synchronous response
 	QueuedProxy http.HandlerFunc
 
-	// AsyncReport report a deferred execution result
-	AsyncReport http.HandlerFunc
-
 	// ScaleFunction enables a function to be scaled
 	ScaleFunction http.HandlerFunc
 
 	// InfoHandler provides version and build info
 	InfoHandler http.HandlerFunc
+
+	TelemetryHandler http.HandlerFunc
 
 	// SecretHandler enables secrets to be managed
 	SecretHandler http.HandlerFunc
@@ -45,4 +44,6 @@ type HandlerSet struct {
 
 	// NamespaceListerHandler lists namespaces
 	NamespaceListerHandler http.HandlerFunc
+
+	NamespaceMutatorHandler http.HandlerFunc
 }

@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -15,7 +15,7 @@ import (
 	types "github.com/openfaas/faas-provider/types"
 )
 
-//GetFunctionInfo get an OpenFaaS function information
+// GetFunctionInfo get an OpenFaaS function information
 func (c *Client) GetFunctionInfo(ctx context.Context, functionName string, namespace string) (types.FunctionStatus, error) {
 	var (
 		result types.FunctionStatus
@@ -48,7 +48,7 @@ func (c *Client) GetFunctionInfo(ctx context.Context, functionName string, names
 
 	switch res.StatusCode {
 	case http.StatusOK:
-		bytesOut, err := ioutil.ReadAll(res.Body)
+		bytesOut, err := io.ReadAll(res.Body)
 		if err != nil {
 			return result, fmt.Errorf("cannot read result from OpenFaaS on URL: %s", c.GatewayURL.String())
 		}
@@ -63,7 +63,7 @@ func (c *Client) GetFunctionInfo(ctx context.Context, functionName string, names
 	case http.StatusNotFound:
 		return result, fmt.Errorf("no such function: %s", functionName)
 	default:
-		bytesOut, err := ioutil.ReadAll(res.Body)
+		bytesOut, err := io.ReadAll(res.Body)
 		if err == nil {
 			return result, fmt.Errorf("server returned unexpected status code: %d - %s", res.StatusCode, string(bytesOut))
 		}

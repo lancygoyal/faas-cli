@@ -1,7 +1,7 @@
-FROM teamserverless/license-check:0.3.9 as license-check
+FROM ghcr.io/openfaas/license-check:0.4.2 as license-check
 
 # Build stage
-FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.17 as builder
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.23 as builder
 
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
@@ -37,10 +37,10 @@ RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
     -X github.com/openfaas/faas-cli/version.GitCommit=${GIT_COMMIT} \
     -X github.com/openfaas/faas-cli/version.Version=${VERSION} \
     -X github.com/openfaas/faas-cli/commands.Platform=${TARGETARCH}" \
-    -a -installsuffix cgo -o faas-cli
+   -o faas-cli
 
 # CICD stage
-FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:3.13 as root
+FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:3.21.0 as root
 
 ARG REPO_URL
 
@@ -57,7 +57,7 @@ ENV PATH=$PATH:/usr/bin/
 ENTRYPOINT [ "faas-cli" ]
 
 # Release stage
-FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:3.13 as release
+FROM --platform=${TARGETPLATFORM:-linux/amd64} alpine:3.21.0 as release
 
 ARG REPO_URL
 
